@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.8.0",
     "next": "16.2.6",
     "plaid": "^42.2.0",
     "react": "19.2.4",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",

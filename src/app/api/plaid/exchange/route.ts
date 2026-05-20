@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
           mask: a.mask ?? null,
           currentBalance: a.balances.current ?? null,
           availableBalance: a.balances.available ?? null,
+          creditLimit: a.balances.limit ?? null,
           isoCurrencyCode: a.balances.iso_currency_code ?? "USD",
           updatedAt: Date.now(),
         })
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
           set: {
             currentBalance: a.balances.current ?? null,
             availableBalance: a.balances.available ?? null,
+            creditLimit: a.balances.limit ?? null,
             updatedAt: Date.now(),
           },
         })

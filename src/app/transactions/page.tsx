@@ -1,33 +1,121 @@
 import Link from "next/link";
-import { desc } from "drizzle-orm";
+import { asc, desc, eq, isNull, and } from "drizzle-orm";
 import { db, schema } from "@/lib/db";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { getCategoryMap, labelForKey, merchantKey } from "@/lib/categories";
+import { TransactionsView } from "./transactions-view";
 
 export const dynamic = "force-dynamic";
 
-export default function TransactionsPage() {
-  const txns = db
+const LIMIT = 500;
+
+export default async function TransactionsPage(props: PageProps<"/transactions">) {
+  const sp = await props.searchParams;
+  const filter = typeof sp.category === "string" ? sp.category : null;
+
+  const baseQuery = db
     .select()
     .from(schema.transactions)
-    .orderBy(desc(schema.transactions.date))
-    .limit(200)
+    .orderBy(desc(schema.transactions.date));
+
+  // Build the filtered list. "uncategorized" is a special filter for null
+  // category keys (transactions that haven't been classified).
+  let txns;
+  if (filter === "uncategorized") {
+    txns = db
+      .select()
+      .from(schema.transactions)
+      .where(isNull(schema.transactions.categoryKey))
+      .orderBy(desc(schema.transactions.date))
+      .limit(LIMIT)
+      .all();
+  } else if (filter && filter !== "all") {
+    txns = db
+      .select()
+      .from(schema.transactions)
+      .where(eq(schema.transactions.categoryKey, filter))
+      .orderBy(desc(schema.transactions.date))
+      .limit(LIMIT)
+      .all();
+  } else {
+    txns = baseQuery.limit(LIMIT).all();
+  }
+
+  // Total counts (for the "filtered N of M" hint)
+  const totalCountRow = db
+    .select()
+    .from(schema.transactions)
     .all();
+  const totalCount = totalCountRow.length;
 
   const accountsList = db.select().from(schema.accounts).all();
   const accountMap = new Map(accountsList.map((a) => [a.id, a]));
 
+  const catMap = getCategoryMap();
+  const categoryOptions = Array.from(catMap.values())
+    .filter((c) => !c.archived)
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((c) => ({ key: c.key, label: c.label }));
+
+  // For the filter bar: also include counts per category so the user can
+  // see "Transportation (148)" etc.
+  const categoryCounts = new Map<string, number>();
+  let uncategorizedCount = 0;
+  for (const t of totalCountRow) {
+    if (!t.categoryKey) {
+      uncategorizedCount++;
+    } else {
+      categoryCounts.set(t.categoryKey, (categoryCounts.get(t.categoryKey) ?? 0) + 1);
+    }
+  }
+  const filterOptions = categoryOptions
+    .map((o) => ({ ...o, count: categoryCounts.get(o.key) ?? 0 }))
+    .filter((o) => o.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  // Per-merchant transaction counts (used by the edit dialog for the
+  // "apply to all N from merchant X" copy).
+  const merchantCounts = new Map<string, number>();
+  for (const t of totalCountRow) {
+    const k = merchantKey(t);
+    merchantCounts.set(k, (merchantCounts.get(k) ?? 0) + 1);
+  }
+
+  // Flatten rows for the client component (Drizzle objects serialize fine,
+  // but we attach derived display fields here while we have catMap handy).
+  const rows = txns.map((t) => ({
+    id: t.id,
+    date: t.date,
+    name: t.name,
+    merchantName: t.merchantName,
+    accountId: t.accountId,
+    accountName: accountMap.get(t.accountId)?.name ?? "—",
+    amount: t.amount,
+    isoCurrencyCode: t.isoCurrencyCode,
+    pending: t.pending,
+    categoryKey: t.categoryKey,
+    categoryLabel: labelForKey(t.categoryKey, catMap),
+    merchantKey: merchantKey(t),
+    merchantTxnCount: merchantCounts.get(merchantKey(t)) ?? 1,
+  }));
+
   return (
     <div className="space-y-6">
-      <section>
-        <h1 className="text-3xl font-bold tracking-tight text-slate-100">Transactions</h1>
-        <p className="mt-1 text-sm text-slate-400">
-          {txns.length === 0
-            ? "No transactions yet. Connect an account to start syncing."
-            : `Showing the latest ${txns.length} transactions across all accounts.`}
-        </p>
+      <section className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-100">
+            Transactions
+          </h1>
+          <p className="mt-1 text-sm text-slate-400">
+            {totalCount === 0
+              ? "No transactions yet. Connect an account to start syncing."
+              : filter
+              ? `Showing ${rows.length}${rows.length >= LIMIT ? "+ (limit)" : ""} of ${totalCount} total`
+              : `Showing latest ${rows.length} of ${totalCount} total`}
+          </p>
+        </div>
       </section>
 
-      {txns.length === 0 ? (
+      {totalCount === 0 ? (
         <section className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 p-10 text-center">
           <Link
             href="/connect"
@@ -37,59 +125,13 @@ export default function TransactionsPage() {
           </Link>
         </section>
       ) : (
-        <section className="overflow-hidden rounded-lg border border-slate-800 bg-slate-900">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-800/60 text-left text-xs font-semibold uppercase tracking-wide text-slate-400">
-              <tr>
-                <th className="px-4 py-2">Date</th>
-                <th className="px-4 py-2">Merchant</th>
-                <th className="px-4 py-2">Account</th>
-                <th className="px-4 py-2">Category</th>
-                <th className="px-4 py-2 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {txns.map((t) => {
-                const acct = accountMap.get(t.accountId);
-                const cat = t.category ? (JSON.parse(t.category) as string[]) : [];
-                return (
-                  <tr key={t.id} className={t.pending ? "bg-slate-800/30" : ""}>
-                    <td className="whitespace-nowrap px-4 py-2 text-slate-400">
-                      {formatDate(t.date)}
-                    </td>
-                    <td className="px-4 py-2">
-                      <div className="font-medium text-slate-100">
-                        {t.merchantName ?? t.name}
-                      </div>
-                      {t.merchantName && t.merchantName !== t.name && (
-                        <div className="text-xs text-slate-500">{t.name}</div>
-                      )}
-                      {t.pending && (
-                        <span className="ml-1 rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-300">
-                          pending
-                        </span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-2 text-slate-400">
-                      {acct?.name ?? "—"}
-                    </td>
-                    <td className="px-4 py-2 text-slate-400">
-                      {cat.length > 0 ? cat[cat.length - 1] : "—"}
-                    </td>
-                    <td
-                      className={`whitespace-nowrap px-4 py-2 text-right font-medium ${
-                        t.amount < 0 ? "text-emerald-400" : "text-slate-100"
-                      }`}
-                    >
-                      {t.amount < 0 ? "+" : "−"}
-                      {formatCurrency(Math.abs(t.amount), t.isoCurrencyCode)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+        <TransactionsView
+          rows={rows}
+          filterOptions={filterOptions}
+          uncategorizedCount={uncategorizedCount}
+          currentFilter={filter}
+          categoryOptions={categoryOptions}
+        />
       )}
     </div>
   );
