@@ -4,8 +4,7 @@
 # Alpaca, household password hash, session secret) live in Fly's encrypted
 # secret store — `fly secrets set KEY=VALUE` — never in this file.
 
-# The app name is set during `fly launch`. Don't commit a hardcoded name.
-
+app = "colton-household-finance"
 primary_region = "iad"  # US East (Ashburn) — closest to most US users; change with `fly regions set`.
 
 [build]
