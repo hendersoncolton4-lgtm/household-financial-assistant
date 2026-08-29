@@ -89,6 +89,9 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
           <h2 className="text-sm font-semibold text-slate-100">Spending by category</h2>
           <div className="text-xs text-slate-400">
             {formatCurrency(categoryTotal)} across {categories.length} categories
+            <span className="ml-2 text-slate-500">
+              · click any row to view + recategorize
+            </span>
           </div>
         </header>
         {categories.length === 0 ? (
@@ -97,26 +100,44 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
           <ul className="divide-y divide-slate-800">
             {categories.map((c) => {
               const pct = categoryTotal > 0 ? c.total / categoryTotal : 0;
+              // The Transactions filter uses "uncategorized" (lowercase) as
+              // its sentinel for null category_key; our rollup uses
+              // "UNCATEGORIZED". Normalize before passing through.
+              const filterKey =
+                c.key === "UNCATEGORIZED" ? "uncategorized" : c.key;
               return (
-                <li key={c.key} className="px-5 py-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium text-slate-100">{c.label}</div>
-                    <div className="flex items-baseline gap-3">
-                      <span className="text-xs text-slate-500">{c.count} txn</span>
-                      <span className="text-sm font-semibold text-slate-100">
-                        {formatCurrency(c.total)}
-                      </span>
-                      <span className="w-10 text-right text-xs text-slate-500">
-                        {(pct * 100).toFixed(0)}%
-                      </span>
+                <li key={c.key}>
+                  <Link
+                    href={`/transactions?category=${encodeURIComponent(filterKey)}`}
+                    className="block px-5 py-3 transition-colors hover:bg-slate-800/50 focus:bg-slate-800/50 focus:outline-none"
+                    title={`View + recategorize ${c.count} transaction${c.count === 1 ? "" : "s"} in ${c.label}`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-medium text-slate-100">
+                          {c.label}
+                        </div>
+                        <span className="text-xs text-slate-500 group-hover:text-slate-300">
+                          →
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-3">
+                        <span className="text-xs text-slate-500">{c.count} txn</span>
+                        <span className="text-sm font-semibold text-slate-100">
+                          {formatCurrency(c.total)}
+                        </span>
+                        <span className="w-10 text-right text-xs text-slate-500">
+                          {(pct * 100).toFixed(0)}%
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
-                    <div
-                      className={`h-full ${barClass(c.key)}`}
-                      style={{ width: `${(pct * 100).toFixed(1)}%` }}
-                    />
-                  </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div
+                        className={`h-full ${barClass(c.key)}`}
+                        style={{ width: `${(pct * 100).toFixed(1)}%` }}
+                      />
+                    </div>
+                  </Link>
                 </li>
               );
             })}
