@@ -316,6 +316,21 @@ export const fundHoldings = sqliteTable("fund_holdings", {
 });
 
 /**
+ * User overrides for recurring-transaction patterns. When the user marks
+ * a detected pattern as cancelled (or hidden), we persist that here so it
+ * survives page reloads and re-detection. Composite key is direction:merchant
+ * — same natural identifier the detector uses.
+ */
+export const recurringStatus = sqliteTable("recurring_status", {
+  id: text("id").primaryKey(), // `${direction}:${merchant}`
+  direction: text("direction").notNull(),
+  merchant: text("merchant").notNull(),
+  status: text("status").notNull(), // 'cancelled' | 'hidden'
+  notes: text("notes"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+/**
  * Congressional Periodic Transaction Reports (STOCK Act). Pulled from the
  * open senatestockwatcher.com + housestockwatcher.com JSON datasets, which
  * scrape the official House Clerk and Senate disclosure portals.

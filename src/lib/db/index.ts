@@ -327,6 +327,15 @@ CREATE INDEX IF NOT EXISTS idx_fund_holdings_filing_id ON fund_holdings(filing_i
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_cik ON fund_holdings(cik);
 CREATE INDEX IF NOT EXISTS idx_fund_holdings_ticker ON fund_holdings(ticker);
 
+CREATE TABLE IF NOT EXISTS recurring_status (
+  id TEXT PRIMARY KEY,
+  direction TEXT NOT NULL,
+  merchant TEXT NOT NULL,
+  status TEXT NOT NULL,
+  notes TEXT,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS congress_trades (
   id TEXT PRIMARY KEY,
   legislator TEXT NOT NULL,

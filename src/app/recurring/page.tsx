@@ -5,24 +5,53 @@ import { getAccountMap, getTransactionsSince } from "@/lib/transactions";
 import {
   CADENCE_LABEL,
   detectRecurring,
+  getRecurringStatusMap,
+  patternId,
   summarizeRecurring,
   type Cadence,
   type RecurringPattern,
 } from "@/lib/recurring";
+import { PatternActions } from "./pattern-actions";
 
 export const dynamic = "force-dynamic";
 
-export default function RecurringPage() {
+type Bucket = "active" | "cancelled" | "hidden";
+
+export default async function RecurringPage(props: PageProps<"/recurring">) {
+  const sp = await props.searchParams;
+  const showHidden = sp.hidden === "1";
+
   // Pull 6 months of transactions so we can spot annual + quarterly patterns.
   const txns = getTransactionsSince(200);
   const accountMap = getAccountMap();
   const categoryMap = getCategoryMap();
 
-  const patterns = detectRecurring(txns, accountMap, categoryMap);
-  const summary = summarizeRecurring(patterns);
-  const incoming = patterns.filter((p) => p.direction === "in");
-  const outgoing = patterns.filter((p) => p.direction === "out");
-  const net = summary.monthlyIncome - summary.monthlyOutflow;
+  const allPatterns = detectRecurring(txns, accountMap, categoryMap);
+  const statusMap = getRecurringStatusMap();
+
+  // Split by user-set status. Anything without an override is "active".
+  const active: RecurringPattern[] = [];
+  const cancelled: RecurringPattern[] = [];
+  const hidden: RecurringPattern[] = [];
+  for (const p of allPatterns) {
+    const status = statusMap.get(patternId(p))?.status ?? "active";
+    if (status === "cancelled") cancelled.push(p);
+    else if (status === "hidden") hidden.push(p);
+    else active.push(p);
+  }
+
+  const activeSummary = summarizeRecurring(active);
+  const cancelledSummary = summarizeRecurring(cancelled);
+  const activeNet = activeSummary.monthlyIncome - activeSummary.monthlyOutflow;
+  const withCancelledNet =
+    activeSummary.monthlyIncome +
+    cancelledSummary.monthlyIncome -
+    (activeSummary.monthlyOutflow + cancelledSummary.monthlyOutflow);
+
+  const activeIn = active.filter((p) => p.direction === "in");
+  const activeOut = active.filter((p) => p.direction === "out");
+  const cancelledIn = cancelled.filter((p) => p.direction === "in");
+  const cancelledOut = cancelled.filter((p) => p.direction === "out");
 
   return (
     <div className="space-y-8">
@@ -32,14 +61,15 @@ export default function RecurringPage() {
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-400">
           Automatically-detected patterns from the last 6 months — things that
-          hit on a regular cadence (weekly, bi-weekly, monthly, quarterly,
-          annual). Includes both money coming in (paychecks, dividends,
-          transfers in) and going out (subscriptions, bills, loan payments).
-          Amounts are normalized to a monthly figure so you can compare.
+          hit on a regular cadence. Includes both money coming in and going
+          out. Amounts are normalized to a monthly figure so you can compare.
+          Click <strong>Cancelled</strong> on any row to move it to the
+          Cancelled section — totals below the fold show what your recurring
+          spend would look like if you kept those.
         </p>
       </section>
 
-      {patterns.length === 0 ? (
+      {allPatterns.length === 0 ? (
         <section className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 p-10 text-center text-sm text-slate-400">
           No recurring patterns detected yet. Need at least 3 occurrences of
           the same merchant with a regular cadence. Hit{" "}
@@ -52,51 +82,148 @@ export default function RecurringPage() {
         <>
           <section className="grid gap-3 sm:grid-cols-3">
             <Stat
-              label="Monthly income (recurring)"
-              value={formatCurrency(summary.monthlyIncome)}
-              sublabel={`${summary.incomeCount} pattern${summary.incomeCount === 1 ? "" : "s"}`}
+              label="Monthly income (active)"
+              value={formatCurrency(activeSummary.monthlyIncome)}
+              sublabel={`${activeSummary.incomeCount} pattern${activeSummary.incomeCount === 1 ? "" : "s"}`}
               positive
             />
             <Stat
-              label="Monthly outflow (recurring)"
-              value={formatCurrency(summary.monthlyOutflow)}
-              sublabel={`${summary.outflowCount} pattern${summary.outflowCount === 1 ? "" : "s"}`}
+              label="Monthly outflow (active)"
+              value={formatCurrency(activeSummary.monthlyOutflow)}
+              sublabel={`${activeSummary.outflowCount} pattern${activeSummary.outflowCount === 1 ? "" : "s"}`}
               negative
             />
             <Stat
-              label="Net recurring / month"
-              value={formatCurrency(net)}
-              positive={net >= 0}
-              negative={net < 0}
+              label="Net / month"
+              value={formatCurrency(activeNet)}
+              sublabel={
+                cancelled.length > 0
+                  ? `${formatCurrency(withCancelledNet)} if cancelled counted`
+                  : undefined
+              }
+              positive={activeNet >= 0}
+              negative={activeNet < 0}
             />
           </section>
 
-          {incoming.length > 0 && (
+          {activeIn.length > 0 && (
             <PatternSection
-              title={`Money coming in (${incoming.length})`}
+              title={`Money coming in (${activeIn.length})`}
               subtitle="Paychecks, dividends, transfers in, refunds, etc."
-              patterns={incoming}
+              patterns={activeIn}
+              bucket="active"
               variant="income"
             />
           )}
 
-          {outgoing.length > 0 && (
+          {activeOut.length > 0 && (
             <PatternSection
-              title={`Money going out (${outgoing.length})`}
+              title={`Money going out (${activeOut.length})`}
               subtitle="Sorted by monthly cost — biggest at the top."
-              patterns={outgoing}
+              patterns={activeOut}
+              bucket="active"
               variant="outflow"
             />
           )}
 
+          {cancelled.length > 0 && (
+            <section>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-100">
+                    Cancelled
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    Moved here manually. Not counted in the main totals.
+                    Reactivate any row to bring it back.
+                  </p>
+                </div>
+                <div className="text-xs text-slate-400">
+                  <span className="text-slate-500">Would add: </span>
+                  <span className="text-emerald-400">
+                    +{formatCurrency(cancelledSummary.monthlyIncome)}
+                  </span>
+                  <span className="text-slate-500"> in / </span>
+                  <span className="text-rose-400">
+                    {formatCurrency(cancelledSummary.monthlyOutflow)}
+                  </span>
+                  <span className="text-slate-500"> out per month</span>
+                </div>
+              </div>
+              {cancelledIn.length > 0 && (
+                <PatternSection
+                  title={`Cancelled income (${cancelledIn.length})`}
+                  subtitle=""
+                  patterns={cancelledIn}
+                  bucket="cancelled"
+                  variant="income"
+                  dim
+                />
+              )}
+              {cancelledOut.length > 0 && (
+                <PatternSection
+                  title={`Cancelled outflow (${cancelledOut.length})`}
+                  subtitle=""
+                  patterns={cancelledOut}
+                  bucket="cancelled"
+                  variant="outflow"
+                  dim
+                />
+              )}
+            </section>
+          )}
+
+          {(hidden.length > 0 || showHidden) && (
+            <section>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-100">Hidden</h2>
+                  <p className="text-xs text-slate-500">
+                    {hidden.length === 0
+                      ? "Nothing hidden."
+                      : `${hidden.length} pattern${hidden.length === 1 ? "" : "s"} hidden. Not counted anywhere.`}
+                  </p>
+                </div>
+                <Link
+                  href={showHidden ? "/recurring" : "/recurring?hidden=1"}
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                >
+                  {showHidden ? "Collapse hidden" : "Show hidden"}
+                </Link>
+              </div>
+              {showHidden && hidden.length > 0 && (
+                <PatternSection
+                  title="Hidden patterns"
+                  subtitle=""
+                  patterns={hidden}
+                  bucket="hidden"
+                  variant="outflow"
+                  dim
+                />
+              )}
+            </section>
+          )}
+
+          {!showHidden && hidden.length === 0 && (
+            <div className="text-center">
+              <Link
+                href="/recurring?hidden=1"
+                className="text-xs text-slate-500 hover:text-slate-300"
+              >
+                Show hidden
+              </Link>
+            </div>
+          )}
+
           <section className="rounded-md border border-slate-800 bg-slate-900/40 p-4 text-xs text-slate-500">
             <strong className="text-slate-300">How this works:</strong> the app
-            groups transactions by merchant, checks whether 3+ occurrences share
-            a similar amount (within 25%) and land on a regular cadence, and
-            classifies the cadence as weekly / bi-weekly / monthly / quarterly /
-            annual. If a pattern feels wrong — a variable-amount bill flagged as
-            recurring, or a merchant it missed — that's a signal we can tune the
-            heuristics. Tell me and I'll adjust.
+            groups transactions by merchant + direction, checks whether 3+
+            occurrences share a similar amount (within 25%) and land on a
+            regular cadence, and classifies as weekly / bi-weekly / monthly /
+            quarterly / annual. Marking a pattern <em>Cancelled</em> keeps it
+            visible in a separate section so you can see the delta; marking it{" "}
+            <em>Hidden</em> tucks it away entirely (toggle "Show hidden" to
+            get it back).
           </section>
         </>
       )}
@@ -108,18 +235,24 @@ function PatternSection({
   title,
   subtitle,
   patterns,
+  bucket,
   variant,
+  dim,
 }: {
   title: string;
   subtitle: string;
   patterns: RecurringPattern[];
+  bucket: Bucket;
   variant: "income" | "outflow";
+  dim?: boolean;
 }) {
   return (
-    <section className="rounded-lg border border-slate-800 bg-slate-900">
+    <section
+      className={`rounded-lg border border-slate-800 bg-slate-900 ${dim ? "opacity-70" : ""}`}
+    >
       <header className="border-b border-slate-800 px-5 py-3">
-        <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
-        <p className="text-xs text-slate-500">{subtitle}</p>
+        <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+        {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
       </header>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -131,13 +264,18 @@ function PatternSection({
               <th className="px-4 py-2 text-right">Monthly</th>
               <th className="px-4 py-2">Category</th>
               <th className="px-4 py-2">Last seen</th>
-              <th className="px-4 py-2">Next expected</th>
               <th className="px-4 py-2 text-right">Seen</th>
+              <th className="px-4 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
             {patterns.map((p) => (
-              <PatternRow key={`${p.direction}:${p.merchant}`} p={p} variant={variant} />
+              <PatternRow
+                key={`${p.direction}:${p.merchant}`}
+                p={p}
+                bucket={bucket}
+                variant={variant}
+              />
             ))}
           </tbody>
         </table>
@@ -148,9 +286,11 @@ function PatternSection({
 
 function PatternRow({
   p,
+  bucket,
   variant,
 }: {
   p: RecurringPattern;
+  bucket: Bucket;
   variant: "income" | "outflow";
 }) {
   const amountClass =
@@ -159,23 +299,26 @@ function PatternRow({
     variant === "income"
       ? "text-emerald-300 font-semibold"
       : "text-slate-100 font-semibold";
+  const dim = bucket !== "active";
 
   return (
-    <tr className="hover:bg-slate-800/30">
-      <td className="px-4 py-2">
-        <div className="font-medium text-slate-100">{p.merchant}</div>
+    <tr className={`hover:bg-slate-800/30 ${dim ? "line-through decoration-slate-600 decoration-2" : ""}`}>
+      <td className="px-4 py-2 no-underline">
+        <div className="font-medium text-slate-100 [text-decoration:inherit]">
+          {p.merchant}
+        </div>
         {p.accountName && (
-          <div className="text-[10px] uppercase tracking-wide text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-slate-500 no-underline">
             {p.accountName}
           </div>
         )}
         {p.amountVariance > 0.15 && (
-          <div className="mt-0.5 text-[10px] text-amber-400">
+          <div className="mt-0.5 text-[10px] text-amber-400 no-underline">
             ± {(p.amountVariance * 100).toFixed(0)}% variance
           </div>
         )}
       </td>
-      <td className="px-4 py-2">
+      <td className="px-4 py-2 no-underline">
         <CadenceBadge cadence={p.cadence} />
       </td>
       <td className={`whitespace-nowrap px-4 py-2 text-right ${amountClass}`}>
@@ -184,17 +327,21 @@ function PatternRow({
       <td className={`whitespace-nowrap px-4 py-2 text-right ${monthlyClass}`}>
         {formatCurrency(p.monthlyAmount)}
       </td>
-      <td className="px-4 py-2 text-xs text-slate-400">
+      <td className="px-4 py-2 text-xs text-slate-400 no-underline">
         {p.categoryLabel ?? "—"}
       </td>
-      <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
+      <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-500 no-underline">
         {formatDate(p.lastDate)}
       </td>
-      <td className="whitespace-nowrap px-4 py-2 text-xs text-slate-500">
-        {formatDate(p.nextExpectedDate)}
-      </td>
-      <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-slate-500">
+      <td className="whitespace-nowrap px-4 py-2 text-right text-xs text-slate-500 no-underline">
         {p.count}×
+      </td>
+      <td className="whitespace-nowrap px-4 py-2 text-right no-underline">
+        <PatternActions
+          direction={p.direction}
+          merchant={p.merchant}
+          currentStatus={bucket}
+        />
       </td>
     </tr>
   );
