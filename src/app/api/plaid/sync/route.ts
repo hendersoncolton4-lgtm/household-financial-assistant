@@ -99,8 +99,18 @@ export async function POST() {
     let added = 0;
     let modified = 0;
     let removed = 0;
+    const itemErrors: Array<{
+      itemId: string;
+      institution: string | null;
+      errorCode: string | null;
+      message: string;
+    }> = [];
 
+    // Wrap each item in its own try/catch so one broken institution doesn't
+    // abort the whole sync. Before this: an ITEM_LOGIN_REQUIRED on Arvest
+    // meant Vanguard + U.S. Bank never got synced either.
     for (const item of items) {
+      try {
       const accessToken = decrypt(item.accessTokenEnc);
       let cursor: string | null = item.cursor;
       let hasMore = true;
@@ -212,11 +222,52 @@ export async function POST() {
         .set({ cursor })
         .where(eq(schema.plaidItems.id, item.id))
         .run();
+      } catch (err) {
+        const anyErr = err as {
+          response?: { data?: { error_code?: string; error_message?: string } };
+          message?: string;
+        };
+        const errorCode = anyErr.response?.data?.error_code ?? null;
+        const message =
+          anyErr.response?.data?.error_message ??
+          anyErr.message ??
+          "Unknown Plaid error";
+        console.error(
+          `[plaid/sync] item ${item.institutionName ?? item.id} failed (${errorCode ?? "unknown"}): ${message}`
+        );
+        itemErrors.push({
+          itemId: item.id,
+          institution: item.institutionName,
+          errorCode,
+          message,
+        });
+        // Continue to the next item.
+      }
     }
 
-    return NextResponse.json({ added, modified, removed, items: items.length });
+    return NextResponse.json({
+      added,
+      modified,
+      removed,
+      items: items.length,
+      itemErrors,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Log the real Plaid error body so it shows up in `fly logs`. The bare
+    // `err.message` is often just "Request failed with status code 400" —
+    // the useful bit lives in err.response.data.
+    const anyErr = err as {
+      response?: { data?: unknown };
+      message?: string;
+    };
+    console.error("[plaid/sync] failed:", anyErr.message);
+    if (anyErr.response?.data) {
+      console.error("[plaid/sync] plaid error body:", JSON.stringify(anyErr.response.data));
+    }
+    const message = anyErr.message ?? "Unknown error";
+    return NextResponse.json(
+      { error: message, plaidError: anyErr.response?.data ?? null },
+      { status: 500 }
+    );
   }
 }

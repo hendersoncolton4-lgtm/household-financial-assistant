@@ -4,6 +4,7 @@ import { formatCurrency, titleCase } from "@/lib/format";
 import { SyncButton } from "./sync-button";
 import { DisconnectButton } from "./disconnect-button";
 import { RemoveManualButton } from "./remove-manual-button";
+import { PlaidStatusBanner } from "./plaid-status-banner";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,8 @@ export default function AccountsPage() {
           {items.length > 0 && <SyncButton />}
         </div>
       </section>
+
+      <PlaidStatusBanner />
 
       {hasAnything && (
         <section className="grid gap-3 sm:grid-cols-3">
