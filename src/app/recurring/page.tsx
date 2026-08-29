@@ -5,10 +5,13 @@ import { getAccountMap, getTransactionsSince } from "@/lib/transactions";
 import {
   CADENCE_LABEL,
   detectRecurring,
+  getIncomeCandidates,
   getRecurringStatusMap,
   patternId,
   summarizeRecurring,
   type Cadence,
+  type IncomeCandidate,
+  type MonthlyIncome,
   type RecurringPattern,
 } from "@/lib/recurring";
 import { PatternActions } from "./pattern-actions";
@@ -28,6 +31,7 @@ export default async function RecurringPage(props: PageProps<"/recurring">) {
 
   const allPatterns = detectRecurring(txns, accountMap, categoryMap);
   const statusMap = getRecurringStatusMap();
+  const income = getIncomeCandidates(200);
 
   // Split by user-set status. Anything without an override is "active".
   const active: RecurringPattern[] = [];
@@ -68,6 +72,8 @@ export default async function RecurringPage(props: PageProps<"/recurring">) {
           spend would look like if you kept those.
         </p>
       </section>
+
+      <IncomeTracker months={income.months} avgMonthly={income.avgMonthly} />
 
       {allPatterns.length === 0 ? (
         <section className="rounded-lg border border-dashed border-slate-700 bg-slate-900/40 p-10 text-center text-sm text-slate-400">
@@ -229,6 +235,117 @@ export default async function RecurringPage(props: PageProps<"/recurring">) {
       )}
     </div>
   );
+}
+
+function IncomeTracker({
+  months,
+  avgMonthly,
+}: {
+  months: MonthlyIncome[];
+  avgMonthly: number;
+}) {
+  if (months.length === 0) {
+    return (
+      <section className="rounded-lg border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+        No income deposits detected in the last 6 months. Expected paychecks
+        to show here? Hit Sync on the Accounts page.
+      </section>
+    );
+  }
+
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
+  return (
+    <section className="rounded-lg border border-emerald-900/50 bg-slate-900">
+      <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-slate-800 px-5 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-100">
+            Income tracker
+          </h2>
+          <p className="text-xs text-slate-500">
+            Handles paycheck-name variance and paper checks — groups by month
+            instead of by merchant. Excludes mortgage LOAN_DISBURSEMENTS
+            mirror entries. Confidence shows how sure we are each item is
+            actually income vs. a transfer or refund.
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-wide text-slate-500">
+            Avg / month (last 3 complete)
+          </div>
+          <div className="text-2xl font-bold text-emerald-300">
+            {formatCurrency(avgMonthly)}
+          </div>
+        </div>
+      </header>
+
+      <ul className="divide-y divide-slate-800">
+        {months.map((m) => (
+          <li key={m.monthIso} className="px-5 py-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-100">
+                {formatMonth(m.monthIso)}
+                {m.monthIso === currentMonth && (
+                  <span className="ml-2 rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-normal uppercase tracking-wide text-slate-400">
+                    In progress
+                  </span>
+                )}
+              </div>
+              <div className="text-lg font-bold text-emerald-300">
+                {formatCurrency(m.total)}
+              </div>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {m.transactions.map((t, i) => (
+                <IncomeItem key={`${t.date}-${t.merchantName}-${i}`} t={t} />
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function IncomeItem({ t }: { t: IncomeCandidate }) {
+  const badge =
+    t.confidence === "high"
+      ? "bg-emerald-500/20 text-emerald-300"
+      : t.confidence === "medium"
+      ? "bg-sky-500/20 text-sky-300"
+      : "bg-amber-500/20 text-amber-300";
+  const badgeLabel =
+    t.confidence === "high" ? "Confirmed" : t.confidence === "medium" ? "Likely" : "Possible";
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-3 py-2 text-sm">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badge}`}
+          >
+            {badgeLabel}
+          </span>
+          <span className="font-medium text-slate-100">{t.merchantName}</span>
+          <span className="text-[10px] text-slate-500">
+            {formatDate(t.date)}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-500">
+          {t.reason}
+          {t.accountName && ` · ${t.accountName}`}
+        </div>
+      </div>
+      <div className="font-semibold text-emerald-300">
+        +{formatCurrency(t.amount)}
+      </div>
+    </li>
+  );
+}
+
+function formatMonth(iso: string): string {
+  const [y, m] = iso.split("-");
+  const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 
 function PatternSection({
